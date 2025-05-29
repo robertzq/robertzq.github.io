@@ -6,6 +6,9 @@
     <title>位置共享与距离计算</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <!-- 添加 Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
     <style>
         * {
             margin: 0;
@@ -292,23 +295,20 @@
             background: linear-gradient(to right, #4facfe, #00f2fe);
             box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
         }
+
+        /* 加载动画 */
+        .loader {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
         
-        @media (max-width: 768px) {
-            .main-content {
-                flex-direction: column;
-            }
-            
-            .info-panel {
-                width: 100%;
-            }
-            
-            .share-section {
-                flex-direction: column;
-            }
-            
-            .share-input {
-                width: 100%;
-            }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
         }
     </style>
 </head>
@@ -401,12 +401,27 @@
         </div>
         
         <div class="footer">
-            <p>位置共享应用 &copy; 2023 | 纯前端实现 | 位置数据仅用于距离计算，不会存储</p>
+            <p>位置共享应用 &copy; 2023 | 使用Firebase实时数据库 | 位置数据仅用于距离计算</p>
         </div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script>
+        // Firebase配置（替换为您的Firebase项目配置）
+        const firebaseConfig = {
+            apiKey: "AIzaSyD3VXfR8D6bLf0vJ3JYf8HZ7Xe9n8d1w2E",
+            authDomain: "location-sharing-demo.firebaseapp.com",
+            databaseURL: "https://location-sharing-demo-default-rtdb.firebaseio.com",
+            projectId: "location-sharing-demo",
+            storageBucket: "location-sharing-demo.appspot.com",
+            messagingSenderId: "123456789012",
+            appId: "1:123456789012:web:abcd1234efgh5678ijkl90"
+        };
+        
+        // 初始化Firebase
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+        
         // 初始化变量
         let userRole = null;
         let userPosition = null;
@@ -439,8 +454,8 @@
             updateShareLink();
             pairCodeDisplay.textContent = pairCode;
             
-            // 尝试从本地存储加载位置数据
-            loadPositions();
+            // 监听位置变化
+            setupPositionListener();
             
             // 设置定时器定期更新位置
             setInterval(updateLocation, 30000);
@@ -496,8 +511,10 @@
             // 更新分享链接
             updateShareLink();
             
-            // 尝试加载位置数据
-            loadPositions();
+            // 保存角色到数据库
+            if (userRole && pairCode) {
+                database.ref(`pairs/${pairCode}/users/${userRole}/role`).set(userRole);
+            }
         }
         
         // 更新分享链接
@@ -514,30 +531,45 @@
             alert('链接已复制到剪贴板！');
         }
         
-        // 加载位置数据
-        function loadPositions() {
-            if (!userRole) return;
+        // 设置位置监听器
+        function setupPositionListener() {
+            if (!pairCode) return;
             
-            // 从本地存储加载位置数据
-            const positions = JSON.parse(localStorage.getItem(pairCode)) || {};
-            
-            // 保存自己的位置（如果已有）
-            if (userPosition) {
-                positions[userRole] = userPosition;
-            }
-            
-            // 获取对方位置
-            const otherRole = userRole === 'A' ? 'B' : 'A';
-            otherPosition = positions[otherRole] || null;
-            
-            // 更新显示
-            updatePositionDisplays();
-            updateMap();
+            // 监听整个配对组的更新
+            database.ref(`pairs/${pairCode}/users`).on('value', (snapshot) => {
+                const users = snapshot.val();
+                if (!users) return;
+                
+                const otherRole = userRole === 'A' ? 'B' : 'A';
+                
+                // 更新用户位置显示
+                if (users[userRole] && users[userRole].position) {
+                    userPosition = users[userRole].position;
+                    userLat.textContent = userPosition.lat.toFixed(6);
+                    userLng.textContent = userPosition.lng.toFixed(6);
+                    updateTime.textContent = new Date(userPosition.timestamp).toLocaleTimeString();
+                    connectionStatus.textContent = "已连接";
+                }
+                
+                // 更新对方位置显示
+                if (users[otherRole] && users[otherRole].position) {
+                    otherPosition = users[otherRole].position;
+                    otherLat.textContent = otherPosition.lat.toFixed(6);
+                    otherLng.textContent = otherPosition.lng.toFixed(6);
+                    otherRoleDisplay.textContent = '用户 ' + otherRole;
+                }
+                
+                // 更新地图
+                updateMap();
+            }, (error) => {
+                console.error("数据库监听错误:", error);
+                connectionStatus.textContent = "连接错误";
+            });
         }
         
-        // 保存位置到本地存储
-        function savePosition(position) {
-            if (!userRole) return;
+        // 保存位置到数据库
+        function savePositionToDatabase(position) {
+            if (!userRole || !pairCode) return;
             
             userPosition = {
                 lat: position.coords.latitude,
@@ -545,37 +577,21 @@
                 timestamp: new Date().toISOString()
             };
             
-            // 从本地存储获取现有位置数据
-            const positions = JSON.parse(localStorage.getItem(pairCode)) || {};
+            // 更新用户显示
+            userLat.textContent = userPosition.lat.toFixed(6);
+            userLng.textContent = userPosition.lng.toFixed(6);
+            updateTime.textContent = new Date().toLocaleTimeString();
             
-            // 更新当前用户位置
-            positions[userRole] = userPosition;
-            
-            // 保存回本地存储
-            localStorage.setItem(pairCode, JSON.stringify(positions));
-            
-            // 更新显示
-            updatePositionDisplays();
-            updateMap();
-        }
-        
-        // 更新位置显示
-        function updatePositionDisplays() {
-            // 更新用户位置显示
-            if (userPosition) {
-                userLat.textContent = userPosition.lat.toFixed(6);
-                userLng.textContent = userPosition.lng.toFixed(6);
-                updateTime.textContent = new Date(userPosition.timestamp).toLocaleTimeString();
+            // 保存到数据库
+            database.ref(`pairs/${pairCode}/users/${userRole}`).set({
+                role: userRole,
+                position: userPosition
+            }).then(() => {
                 connectionStatus.textContent = "已连接";
-            }
-            
-            // 更新对方位置显示
-            if (otherPosition) {
-                otherLat.textContent = otherPosition.lat.toFixed(6);
-                otherLng.textContent = otherPosition.lng.toFixed(6);
-                const otherRole = userRole === 'A' ? 'B' : 'A';
-                otherRoleDisplay.textContent = '用户 ' + otherRole;
-            }
+            }).catch((error) => {
+                console.error("保存位置失败:", error);
+                connectionStatus.textContent = "保存失败";
+            });
         }
         
         // 更新地图显示
@@ -664,13 +680,13 @@
         // 获取用户位置
         function getLocation() {
             if (navigator.geolocation) {
-                locationStatus.textContent = "正在获取您的位置...";
-                permissionBtn.textContent = "正在获取位置...";
+                locationStatus.innerHTML = '<span class="loader"></span> 正在获取您的位置...';
+                permissionBtn.innerHTML = '<span class="loader"></span> 正在获取位置...';
                 permissionBtn.disabled = true;
                 
                 navigator.geolocation.getCurrentPosition(
                     (position) => {
-                        savePosition(position);
+                        savePositionToDatabase(position);
                         locationStatus.innerHTML = '<i class="fas fa-check-circle"></i> 位置获取成功';
                         permissionBtn.innerHTML = '<i class="fas fa-sync-alt"></i> 刷新位置';
                         permissionBtn.disabled = false;
@@ -698,7 +714,7 @@
             if (navigator.geolocation && userRole) {
                 navigator.geolocation.getCurrentPosition(
                     (position) => {
-                        savePosition(position);
+                        savePositionToDatabase(position);
                     },
                     (error) => {
                         console.error("更新位置时出错:", error);
@@ -714,12 +730,6 @@
         
         // 事件监听
         permissionBtn.addEventListener('click', getLocation);
-        
-        // 初始化页面时尝试获取位置
-        window.addEventListener('load', () => {
-            // 定期检查位置更新
-            setInterval(loadPositions, 5000);
-        });
     </script>
 </body>
 </html>
