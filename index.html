@@ -6,9 +6,7 @@
     <title>位置共享与距离计算</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <!-- 添加 Firebase SDK -->
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+   
     <style>
         * {
             margin: 0;
@@ -407,21 +405,6 @@
 
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script>
-        // Firebase配置（替换为您的Firebase项目配置）
-        const firebaseConfig = {
-            apiKey: "AIzaSyD3VXfR8D6bLf0vJ3JYf8HZ7Xe9n8d1w2E",
-            authDomain: "location-sharing-demo.firebaseapp.com",
-            databaseURL: "https://location-sharing-demo-default-rtdb.firebaseio.com",
-            projectId: "location-sharing-demo",
-            storageBucket: "location-sharing-demo.appspot.com",
-            messagingSenderId: "123456789012",
-            appId: "1:123456789012:web:abcd1234efgh5678ijkl90"
-        };
-        
-        // 初始化Firebase
-        firebase.initializeApp(firebaseConfig);
-        const database = firebase.database();
-        
         // 初始化变量
         let userRole = null;
         let userPosition = null;
@@ -446,6 +429,9 @@
         const roleABtn = document.getElementById('role-a');
         const roleBBtn = document.getElementById('role-b');
         
+        // 服务器配置
+        const SERVER_URL = "http://120.26.12.37:3000";
+        
         // 初始化
         document.addEventListener('DOMContentLoaded', function() {
             initMap();
@@ -454,8 +440,8 @@
             updateShareLink();
             pairCodeDisplay.textContent = pairCode;
             
-            // 监听位置变化
-            setupPositionListener();
+            // 设置定时器获取对方位置
+            setInterval(fetchOtherPosition, 5000);
             
             // 设置定时器定期更新位置
             setInterval(updateLocation, 30000);
@@ -476,9 +462,8 @@
         
         // 初始化地图
         function initMap() {
-            map = L.map('map').setView([39.9042, 116.4074], 4); // 初始中心点设为北京
+            map = L.map('map').setView([39.9042, 116.4074], 4);
             
-            // 添加地图图层
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             }).addTo(map);
@@ -489,7 +474,6 @@
             roleABtn.addEventListener('click', () => setUserRole('A'));
             roleBBtn.addEventListener('click', () => setUserRole('B'));
             
-            // 尝试从本地存储加载角色
             const savedRole = localStorage.getItem('userRole');
             if (savedRole) {
                 setUserRole(savedRole);
@@ -501,20 +485,11 @@
             userRole = role;
             userRoleDisplay.textContent = '用户 ' + userRole;
             
-            // 更新按钮状态
             roleABtn.classList.toggle('active', userRole === 'A');
             roleBBtn.classList.toggle('active', userRole === 'B');
             
-            // 保存到本地存储
             localStorage.setItem('userRole', userRole);
-            
-            // 更新分享链接
             updateShareLink();
-            
-            // 保存角色到数据库
-            if (userRole && pairCode) {
-                database.ref(`pairs/${pairCode}/users/${userRole}/role`).set(userRole);
-            }
         }
         
         // 更新分享链接
@@ -531,44 +506,39 @@
             alert('链接已复制到剪贴板！');
         }
         
-        // 设置位置监听器
-        function setupPositionListener() {
-            if (!pairCode) return;
+        // 获取对方位置
+        async function fetchOtherPosition() {
+            if (!pairCode || !userRole) return;
             
-            // 监听整个配对组的更新
-            database.ref(`pairs/${pairCode}/users`).on('value', (snapshot) => {
-                const users = snapshot.val();
-                if (!users) return;
+            try {
+                const response = await fetch(`${SERVER_URL}/position/${pairCode}`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    connectionStatus.textContent = "等待对方连接...";
+                    return;
+                }
                 
                 const otherRole = userRole === 'A' ? 'B' : 'A';
                 
-                // 更新用户位置显示
-                if (users[userRole] && users[userRole].position) {
-                    userPosition = users[userRole].position;
-                    userLat.textContent = userPosition.lat.toFixed(6);
-                    userLng.textContent = userPosition.lng.toFixed(6);
-                    updateTime.textContent = new Date(userPosition.timestamp).toLocaleTimeString();
-                    connectionStatus.textContent = "已连接";
-                }
-                
-                // 更新对方位置显示
-                if (users[otherRole] && users[otherRole].position) {
-                    otherPosition = users[otherRole].position;
+                if (data[otherRole]) {
+                    otherPosition = data[otherRole];
                     otherLat.textContent = otherPosition.lat.toFixed(6);
                     otherLng.textContent = otherPosition.lng.toFixed(6);
                     otherRoleDisplay.textContent = '用户 ' + otherRole;
+                    connectionStatus.textContent = "已连接";
+                    
+                    // 更新地图
+                    updateMap();
                 }
-                
-                // 更新地图
-                updateMap();
-            }, (error) => {
-                console.error("数据库监听错误:", error);
+            } catch (error) {
+                console.error("获取对方位置失败:", error);
                 connectionStatus.textContent = "连接错误";
-            });
+            }
         }
         
-        // 保存位置到数据库
-        function savePositionToDatabase(position) {
+        // 保存位置到服务器
+        async function savePositionToDatabase(position) {
             if (!userRole || !pairCode) return;
             
             userPosition = {
@@ -577,31 +547,38 @@
                 timestamp: new Date().toISOString()
             };
             
-            // 更新用户显示
             userLat.textContent = userPosition.lat.toFixed(6);
             userLng.textContent = userPosition.lng.toFixed(6);
             updateTime.textContent = new Date().toLocaleTimeString();
             
-            // 保存到数据库
-            database.ref(`pairs/${pairCode}/users/${userRole}`).set({
-                role: userRole,
-                position: userPosition
-            }).then(() => {
-                connectionStatus.textContent = "已连接";
-            }).catch((error) => {
+            try {
+                const response = await fetch(`${SERVER_URL}/position`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        pairCode,
+                        role: userRole,
+                        position: userPosition
+                    })
+                });
+                
+                if (response.ok) {
+                    connectionStatus.textContent = "位置已更新";
+                }
+            } catch (error) {
                 console.error("保存位置失败:", error);
                 connectionStatus.textContent = "保存失败";
-            });
+            }
         }
         
         // 更新地图显示
         function updateMap() {
-            // 清除现有标记和线条
             if (userMarker) map.removeLayer(userMarker);
             if (otherMarker) map.removeLayer(otherMarker);
             if (distanceLine) map.removeLayer(distanceLine);
             
-            // 添加用户标记
             if (userPosition) {
                 userMarker = L.marker([userPosition.lat, userPosition.lng], {
                     icon: L.divIcon({
@@ -613,7 +590,6 @@
                 userMarker.bindPopup('您的位置').openPopup();
             }
             
-            // 添加对方标记
             if (otherPosition) {
                 otherMarker = L.marker([otherPosition.lat, otherPosition.lng], {
                     icon: L.divIcon({
@@ -625,7 +601,6 @@
                 otherMarker.bindPopup('对方位置');
             }
             
-            // 添加连接线并计算距离
             if (userPosition && otherPosition) {
                 const latlngs = [
                     [userPosition.lat, userPosition.lng],
@@ -638,7 +613,6 @@
                     dashArray: '5, 10'
                 }).addTo(map);
                 
-                // 计算并显示距离
                 const distance = calculateDistance(
                     userPosition.lat, userPosition.lng,
                     otherPosition.lat, otherPosition.lng
@@ -647,7 +621,6 @@
                 distanceValue.textContent = distance.toFixed(2) + ' 公里';
             }
             
-            // 调整地图视图
             if (userPosition && otherPosition) {
                 const bounds = L.latLngBounds(
                     [userPosition.lat, userPosition.lng],
@@ -659,9 +632,9 @@
             }
         }
         
-        // 计算两点间距离的函数（使用Haversine公式）
+        // 计算距离
         function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371; // 地球半径（公里）
+            const R = 6371;
             const dLat = deg2rad(lat2 - lat1);
             const dLon = deg2rad(lon2 - lon1);
             const a = 
@@ -669,8 +642,7 @@
                 Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
                 Math.sin(dLon/2) * Math.sin(dLon/2);
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
-            const distance = R * c; // 距离（公里）
-            return distance;
+            return R * c;
         }
         
         function deg2rad(deg) {
@@ -692,7 +664,6 @@
                         permissionBtn.disabled = false;
                     },
                     (error) => {
-                        console.error("获取位置时出错:", error);
                         locationStatus.innerHTML = '<i class="fas fa-exclamation-triangle"></i> 获取位置失败: ' + error.message;
                         permissionBtn.innerHTML = '<i class="fas fa-location-crosshairs"></i> 重试位置访问';
                         permissionBtn.disabled = false;
