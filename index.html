@@ -6,7 +6,6 @@
     <title>位置共享与距离计算</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-   
     <style>
         * {
             margin: 0;
@@ -308,6 +307,38 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+        
+        .server-config {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+            font-size: 0.9rem;
+        }
+        
+        .config-input {
+            display: flex;
+            margin-top: 10px;
+            gap: 10px;
+        }
+        
+        .config-input input {
+            flex: 1;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+        
+        .config-input button {
+            padding: 0 15px;
+            background: #4facfe;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -315,6 +346,9 @@
         <header>
             <h1><i class="fas fa-location-dot"></i> 位置共享与距离计算</h1>
             <p>与朋友分享您的位置，实时查看两人之间的距离。当两人都允许位置访问后，地图将显示双方位置并计算距离。</p>
+            <p style="margin-top: 10px; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 8px;">
+                后端服务器: <span id="server-address">未配置</span>
+            </p>
         </header>
         
         <div class="main-content">
@@ -373,6 +407,16 @@
                         <i class="fas fa-location-crosshairs"></i> 允许位置访问
                     </button>
                 </div>
+                
+                <div class="server-config">
+                    <div class="coordinate-item">
+                        <span>后端服务器配置:</span>
+                    </div>
+                    <div class="config-input">
+                        <input type="text" id="server-input" placeholder="http://120.26.12.37:3000">
+                        <button onclick="saveServerConfig()">保存</button>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -388,6 +432,7 @@
         <div class="instructions">
             <h3><i class="fas fa-info-circle"></i> 使用说明</h3>
             <ol>
+                <li>配置后端服务器地址（默认为 http://120.26.12.37:3000）</li>
                 <li>点击"允许位置访问"按钮，授予浏览器获取您位置的权限</li>
                 <li>选择您的角色（用户A或用户B）</li>
                 <li>复制分享链接并发送给朋友</li>
@@ -399,7 +444,7 @@
         </div>
         
         <div class="footer">
-            <p>位置共享应用 &copy; 2023 | 使用Firebase实时数据库 | 位置数据仅用于距离计算</p>
+            <p>位置共享应用 &copy; 2023 | 使用自定义Node.js后端 | 位置数据仅用于距离计算</p>
         </div>
     </div>
 
@@ -411,6 +456,7 @@
         let otherPosition = null;
         let pairCode = generatePairCode();
         let map, userMarker, otherMarker, distanceLine;
+        let serverUrl = "http://172.26.27.83:3000"; // 默认服务器地址
         
         // DOM元素
         const distanceValue = document.querySelector('.distance-value');
@@ -428,14 +474,14 @@
         const shareLink = document.getElementById('share-link');
         const roleABtn = document.getElementById('role-a');
         const roleBBtn = document.getElementById('role-b');
-        
-        // 服务器配置
-        const SERVER_URL = "http://172.26.27.83:3000";
+        const serverAddressDisplay = document.getElementById('server-address');
+        const serverInput = document.getElementById('server-input');
         
         // 初始化
         document.addEventListener('DOMContentLoaded', function() {
             initMap();
             setupRoleButtons();
+            loadServerConfig();
             loadPairCodeFromURL();
             updateShareLink();
             pairCodeDisplay.textContent = pairCode;
@@ -460,10 +506,52 @@
             }
         }
         
+        // 加载服务器配置
+        function loadServerConfig() {
+            const savedServer = localStorage.getItem('serverUrl');
+            if (savedServer) {
+                serverUrl = savedServer;
+            }
+            serverInput.value = serverUrl;
+            serverAddressDisplay.textContent = serverUrl;
+        }
+        
+        // 保存服务器配置
+        function saveServerConfig() {
+            const newServer = serverInput.value.trim();
+            if (newServer) {
+                serverUrl = newServer;
+                localStorage.setItem('serverUrl', serverUrl);
+                serverAddressDisplay.textContent = serverUrl;
+                connectionStatus.textContent = "服务器配置已更新";
+                
+                // 测试服务器连接
+                testServerConnection();
+            }
+        }
+        
+        // 测试服务器连接
+        async function testServerConnection() {
+            try {
+                connectionStatus.textContent = "正在测试服务器连接...";
+                const response = await fetch(`${serverUrl}/health`);
+                if (response.ok) {
+                    const data = await response.json();
+                    connectionStatus.textContent = `服务器连接正常 (${data.status})`;
+                } else {
+                    connectionStatus.textContent = "服务器连接失败";
+                }
+            } catch (error) {
+                console.error("服务器连接测试失败:", error);
+                connectionStatus.textContent = "服务器连接失败";
+            }
+        }
+        
         // 初始化地图
         function initMap() {
-            map = L.map('map').setView([39.9042, 116.4074], 4);
+            map = L.map('map').setView([39.9042, 116.4074], 4); // 初始中心点设为北京
             
+            // 添加地图图层
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             }).addTo(map);
@@ -474,6 +562,7 @@
             roleABtn.addEventListener('click', () => setUserRole('A'));
             roleBBtn.addEventListener('click', () => setUserRole('B'));
             
+            // 尝试从本地存储加载角色
             const savedRole = localStorage.getItem('userRole');
             if (savedRole) {
                 setUserRole(savedRole);
@@ -485,10 +574,14 @@
             userRole = role;
             userRoleDisplay.textContent = '用户 ' + userRole;
             
+            // 更新按钮状态
             roleABtn.classList.toggle('active', userRole === 'A');
             roleBBtn.classList.toggle('active', userRole === 'B');
             
+            // 保存到本地存储
             localStorage.setItem('userRole', userRole);
+            
+            // 更新分享链接
             updateShareLink();
         }
         
@@ -511,7 +604,7 @@
             if (!pairCode || !userRole) return;
             
             try {
-                const response = await fetch(`${SERVER_URL}/position/${pairCode}`);
+                const response = await fetch(`${serverUrl}/position/${pairCode}`);
                 const data = await response.json();
                 
                 if (data.error) {
@@ -552,7 +645,7 @@
             updateTime.textContent = new Date().toLocaleTimeString();
             
             try {
-                const response = await fetch(`${SERVER_URL}/position`, {
+                const response = await fetch(`${serverUrl}/position`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -575,10 +668,12 @@
         
         // 更新地图显示
         function updateMap() {
+            // 清除现有标记和线条
             if (userMarker) map.removeLayer(userMarker);
             if (otherMarker) map.removeLayer(otherMarker);
             if (distanceLine) map.removeLayer(distanceLine);
             
+            // 添加用户标记
             if (userPosition) {
                 userMarker = L.marker([userPosition.lat, userPosition.lng], {
                     icon: L.divIcon({
@@ -590,6 +685,7 @@
                 userMarker.bindPopup('您的位置').openPopup();
             }
             
+            // 添加对方标记
             if (otherPosition) {
                 otherMarker = L.marker([otherPosition.lat, otherPosition.lng], {
                     icon: L.divIcon({
@@ -601,6 +697,7 @@
                 otherMarker.bindPopup('对方位置');
             }
             
+            // 添加连接线并计算距离
             if (userPosition && otherPosition) {
                 const latlngs = [
                     [userPosition.lat, userPosition.lng],
@@ -613,6 +710,7 @@
                     dashArray: '5, 10'
                 }).addTo(map);
                 
+                // 计算并显示距离
                 const distance = calculateDistance(
                     userPosition.lat, userPosition.lng,
                     otherPosition.lat, otherPosition.lng
@@ -621,6 +719,7 @@
                 distanceValue.textContent = distance.toFixed(2) + ' 公里';
             }
             
+            // 调整地图视图
             if (userPosition && otherPosition) {
                 const bounds = L.latLngBounds(
                     [userPosition.lat, userPosition.lng],
@@ -632,9 +731,9 @@
             }
         }
         
-        // 计算距离
+        // 计算两点间距离的函数（使用Haversine公式）
         function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371;
+            const R = 6371; // 地球半径（公里）
             const dLat = deg2rad(lat2 - lat1);
             const dLon = deg2rad(lon2 - lon1);
             const a = 
@@ -642,7 +741,8 @@
                 Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
                 Math.sin(dLon/2) * Math.sin(dLon/2);
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
-            return R * c;
+            const distance = R * c; // 距离（公里）
+            return distance;
         }
         
         function deg2rad(deg) {
@@ -664,6 +764,7 @@
                         permissionBtn.disabled = false;
                     },
                     (error) => {
+                        console.error("获取位置时出错:", error);
                         locationStatus.innerHTML = '<i class="fas fa-exclamation-triangle"></i> 获取位置失败: ' + error.message;
                         permissionBtn.innerHTML = '<i class="fas fa-location-crosshairs"></i> 重试位置访问';
                         permissionBtn.disabled = false;

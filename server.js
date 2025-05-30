@@ -10,6 +10,16 @@ const positions = {};
 app.use(cors());
 app.use(express.json());
 
+// 健康检查端点
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'OK',
+        message: '位置共享服务运行正常',
+        timestamp: new Date().toISOString(),
+        pairsCount: Object.keys(positions).length
+    });
+});
+
 // 保存位置信息
 app.post('/position', (req, res) => {
     const { pairCode, role, position } = req.body;
@@ -53,6 +63,6 @@ app.get('/position/:pairCode', (req, res) => {
 });
 
 // 启动服务器
-app.listen(port, () => {
-    console.log(`服务器运行在 http://172.26.27.83:${port}`);
+app.listen(port, '0.0.0.0', () => {
+    console.log(`服务器运行在 http://0.0.0.0:${port}`);
 });
