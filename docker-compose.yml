@@ -1,0 +1,27 @@
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: location_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+    networks:
+      - location-network
+
+  backend:
+    build: ./backend
+    container_name: location_backend
+    environment:
+      - PORT=3000
+    networks:
+      - location-network
+    # 生产环境建议使用重启策略
+    restart: unless-stopped
+
+networks:
+  location-network:
+    driver: bridge
